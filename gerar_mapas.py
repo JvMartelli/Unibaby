@@ -40,18 +40,19 @@ regras_df["CNPJ"] = regras_df["CNPJ"].astype(str).str.replace(r"\D", "", regex=T
 
 if os.path.exists(CONVERSAO_PATH):
     conv_df = pd.read_excel(CONVERSAO_PATH)
-    conv_df["Produto"] = conv_df["Produto"].str.upper().str.strip()
+    conv_df["Codigo"] = conv_df["Codigo"].astype(str).str.strip()
     conversao = {
-        row["Produto"]: (row["Tipo"], int(row["Un_por_embalagem"]))
+        row["Codigo"]: (row["Tipo"], int(row["Un_por_embalagem"]))
         for _, row in conv_df.iterrows()
     }
+
 else:
     conversao = {}
 
 ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 
 mapas_individuais = defaultdict(lambda: defaultdict(lambda: {
-    "produtos": defaultdict(int),
+    "produtos": defaultdict(lambda: {"qtd": 0, "codigo": ""}),
     "endereco": "",
     "cnpj": "",
     "pesoL": 0.0,
@@ -59,7 +60,7 @@ mapas_individuais = defaultdict(lambda: defaultdict(lambda: {
 }))
 
 mapas_consolidados = defaultdict(lambda: {
-    "produtos": defaultdict(int),
+    "produtos": defaultdict(lambda: {"qtd": 0, "codigo": ""}),
     "pesoL": 0.0,
     "pesoB": 0.0
 })
@@ -102,17 +103,22 @@ for arquivo in os.listdir(XML_DIR):
 
     for det in root.findall(".//nfe:det", ns):
         prod = det.find("nfe:prod", ns)
+        codigo = prod.find("nfe:cProd", ns).text.strip()
         nome = prod.find("nfe:xProd", ns).text.upper().strip()
         qtd = float(prod.find("nfe:qCom", ns).text)
 
         if individual:
             mapas_individuais[cidade][cliente]["endereco"] = endereco
             mapas_individuais[cidade][cliente]["cnpj"] = doc
-            mapas_individuais[cidade][cliente]["produtos"][nome] += qtd
+            item = mapas_individuais[cidade][cliente]["produtos"][nome]
+            item["qtd"] += qtd
+            item["codigo"] = codigo
             mapas_individuais[cidade][cliente]["pesoL"] += pesoL
             mapas_individuais[cidade][cliente]["pesoB"] += pesoB
         else:
-            mapas_consolidados[cidade]["produtos"][nome] += qtd
+            item = mapas_consolidados[cidade]["produtos"][nome]
+            item["qtd"] += qtd
+            item["codigo"] = codigo
             mapas_consolidados[cidade]["pesoL"] += pesoL
             mapas_consolidados[cidade]["pesoB"] += pesoB
 
@@ -131,11 +137,11 @@ def quebrar_texto(texto, largura, fonte, tamanho):
         linhas.append(linha)
     return linhas
 
-def formatar_quantidade(produto, total_un):
-    if produto not in conversao:
+def formatar_quantidade(codigo, total_un):
+    if codigo not in conversao:
         return f"{int(total_un)} UN", 0, int(total_un)
 
-    tipo, fator = conversao[produto]
+    tipo, fator = conversao[codigo]
     cx = int(total_un // fator)
     un = int(total_un % fator)
 
@@ -207,8 +213,12 @@ def gerar_pdf(cidade, motorista, cliente, cnpj, endereco, dados, caminho):
     qtd_x = 18.8*cm
     linha_base = 0.6*cm
 
-    for produto, qtd in sorted(produtos.items()):
-        linhas = quebrar_texto(produto, produto_largura, "Helvetica", 10)
+    for produto, dados_prod in sorted(produtos.items()):
+        codigo = dados_prod["codigo"]
+        qtd = dados_prod["qtd"]
+
+        texto_produto = f"{codigo} - {produto}"
+        linhas = quebrar_texto(texto_produto, produto_largura, "Helvetica", 10)
         altura_bloco = max(len(linhas) * linha_base + 0.4*cm, 1.1*cm)
 
         if y - altura_bloco < 3*cm:
@@ -230,7 +240,7 @@ def gerar_pdf(cidade, motorista, cliente, cnpj, endereco, dados, caminho):
 
         c.rect(check_x, centro_y-0.25*cm, 0.45*cm, 0.45*cm)
 
-        texto_qtd, cx, un = formatar_quantidade(produto, qtd)
+        texto_qtd, cx, un = formatar_quantidade(codigo, qtd)
         total_cx += cx
         total_un += un
 
